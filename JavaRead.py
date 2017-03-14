@@ -4,6 +4,9 @@ import os
 import shutil
 import unicodedata
 
+# TimeIt module
+import TimeIt
+
 
 class JavaRead(object):
     def __init__(self, verbose=False):
@@ -30,6 +33,7 @@ class JavaRead(object):
         normalizedData = unicodedata.normalize('NFKD', file_data).encode('ascii', 'replace')
         return normalizedData
 
+    @TimeIt.time_func
     def generateNewFile(self, original_file=None, file_data=None):
         original_file_root, original_file_name = os.path.split(original_file)
 

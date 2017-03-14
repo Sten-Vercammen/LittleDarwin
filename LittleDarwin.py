@@ -41,6 +41,9 @@ import signal
 import time
 import subprocess
 
+# TimeIt module
+import TimeIt
+
 # workaround for stupid ATNDeserializer error
 #subprocess.call(['find', '.', '-iname', '*.pyc', '-delete'], stdout=sys.stdout, stderr=sys.stderr)
 
@@ -212,93 +215,95 @@ def main(argv):
     #*****************************************************************************************************************
 
     if options.isMutationActive:
-        assert options.isVerboseActive is not None
-        # creating our module objects.
-        javaRead = JavaRead(options.isVerboseActive)
-        javaParse = JavaParse(options.isVerboseActive)
-        javaMutate = JavaMutate(javaParse, options.isVerboseActive)
+        with TimeIt.time_context('LittleDarwin', 'prepareGetFileNames'):
+            assert options.isVerboseActive is not None
+            # creating our module objects.
+            javaRead = JavaRead(options.isVerboseActive)
+            javaParse = JavaParse(options.isVerboseActive)
+            javaMutate = JavaMutate(javaParse, options.isVerboseActive)
 
-        totalMutantCount = 0
+            totalMutantCount = 0
 
-
-        try:
-            assert os.path.isdir(options.sourcePath)
-        except AssertionError as exception:
-            print "source path must be a directory."
-            sys.exit(1)
-
-
-        # getting the list of files.
-        javaRead.listFiles(os.path.abspath(options.sourcePath))
-        fileCounter = 0
-        fileCount = len(javaRead.fileList)
-
-        # creating a database for generated mutants. the format of this database is different on different platforms,
-        # so it cannot be simply copied from a platform to another.
-        databasePath = os.path.join(javaRead.targetDirectory, "mutationdatabase")
-
-        print "source dir: ", javaRead.sourceDirectory
-        print "target dir: ", javaRead.targetDirectory
-        print "creating mutation database: ", databasePath
-
-        mutationDatabase = shelve.open(databasePath, "c")
-        mutantTypeDatabase = dict()
-
-        # go through each file, parse it, calculate all mutations, and generate files accordingly.
-        for srcFile in javaRead.fileList:
-            print "(" + str(fileCounter + 1) + "/" + str(fileCount) + ") source file: ", srcFile
-            targetList = list()
 
             try:
-                # parsing the source file into a tree.
-                tree = javaParse.parse(javaRead.getFileContent(srcFile))
+                assert os.path.isdir(options.sourcePath)
+            except AssertionError as exception:
+                print "source path must be a directory."
+                sys.exit(1)
 
-                # assigning a number to each node to be able to identify it uniquely.
-                javaParse.numerify(tree)
-                # javaParse.tree2DOT(tree)
 
-            except Exception as e:
-                # Java 8 problem
-                print "Error in parsing, skipping the file."
-                sys.stderr.write(e.message)
-                continue
+            # getting the list of files.
+            javaRead.listFiles(os.path.abspath(options.sourcePath))
+            fileCounter = 0
+            fileCount = len(javaRead.fileList)
 
-            fileCounter += 1
+            # creating a database for generated mutants. the format of this database is different on different platforms,
+            # so it cannot be simply copied from a platform to another.
+            databasePath = os.path.join(javaRead.targetDirectory, "mutationdatabase")
 
-            if options.isAll:
-                enabledMutators = "all"
-            elif options.isNullCheck:
-                enabledMutators = "null-check"
-            else:
-                enabledMutators = "classical"
+            print "source dir: ", javaRead.sourceDirectory
+            print "target dir: ", javaRead.targetDirectory
+            print "creating mutation database: ", databasePath
 
-            # apply mutations on the tree and receive the resulting mutants as a list of strings, and a detailed
-            # list of which operators created how many mutants.
-            mutated, mutantTypes = javaMutate.applyMutators(tree, higherOrder, enabledMutators)
+            mutationDatabase = shelve.open(databasePath, "c")
+            mutantTypeDatabase = dict()
 
-            print "--> mutations found: ", len(mutated)
+        with TimeIt.time_context('LittleDarwin', 'getFilesAndMutate'):
+            # go through each file, parse it, calculate all mutations, and generate files accordingly.
+            for srcFile in javaRead.fileList:
+                print "(" + str(fileCounter + 1) + "/" + str(fileCount) + ") source file: ", srcFile
+                targetList = list()
 
-            # go through all mutant types, and add them in total. also output the info to the user.
-            for mutantType in mutantTypes.keys():
-                if mutantTypes[mutantType] > 0:
-                    print "---->", mutantType, ":", mutantTypes[mutantType]
-                mutantTypeDatabase[mutantType] = mutantTypes[mutantType] + mutantTypeDatabase.get(mutantType, 0)
-            totalMutantCount += len(mutated)
+                try:
+                    # parsing the source file into a tree.
+                    tree = javaParse.parse(javaRead.getFileContent(srcFile))
 
-            # for each mutant, generate the file, and add it to the list.
-            for mutatedFile in mutated:
-                targetList.append(javaRead.generateNewFile(srcFile, mutatedFile))
+                    # assigning a number to each node to be able to identify it uniquely.
+                    javaParse.numerify(tree)
+                    # javaParse.tree2DOT(tree)
 
-            # if the list is not empty (some mutants were found), put the data in the database.
-            if len(targetList) != 0:
-                mutationDatabase[os.path.relpath(srcFile, javaRead.sourceDirectory)] = targetList
+                except Exception as e:
+                    # Java 8 problem
+                    print "Error in parsing, skipping the file."
+                    sys.stderr.write(e.message)
+                    continue
 
-        mutationDatabase.close()
+                fileCounter += 1
 
-        print "total mutations found: ", totalMutantCount
-        for mutantType in mutantTypeDatabase.keys():
-            if mutantTypeDatabase[mutantType] > 0:
-                print "-->", mutantType, ":", mutantTypeDatabase[mutantType]
+                if options.isAll:
+                    enabledMutators = "all"
+                elif options.isNullCheck:
+                    enabledMutators = "null-check"
+                else:
+                    enabledMutators = "classical"
+
+                # apply mutations on the tree and receive the resulting mutants as a list of strings, and a detailed
+                # list of which operators created how many mutants.
+                mutated, mutantTypes = javaMutate.applyMutators(tree, higherOrder, enabledMutators)
+
+                print "--> mutations found: ", len(mutated)
+
+                # go through all mutant types, and add them in total. also output the info to the user.
+                for mutantType in mutantTypes.keys():
+                    if mutantTypes[mutantType] > 0:
+                        print "---->", mutantType, ":", mutantTypes[mutantType]
+                    mutantTypeDatabase[mutantType] = mutantTypes[mutantType] + mutantTypeDatabase.get(mutantType, 0)
+                totalMutantCount += len(mutated)
+
+                # for each mutant, generate the file, and add it to the list.
+                for mutatedFile in mutated:
+                    targetList.append(javaRead.generateNewFile(srcFile, mutatedFile))
+
+                # if the list is not empty (some mutants were found), put the data in the database.
+                if len(targetList) != 0:
+                    mutationDatabase[os.path.relpath(srcFile, javaRead.sourceDirectory)] = targetList
+
+            mutationDatabase.close()
+
+            print "total mutations found: ", totalMutantCount
+            for mutantType in mutantTypeDatabase.keys():
+                if mutantTypeDatabase[mutantType] > 0:
+                    print "-->", mutantType, ":", mutantTypeDatabase[mutantType]
 
 
     #*****************************************************************************************************************
@@ -306,262 +311,267 @@ def main(argv):
     #*****************************************************************************************************************
 
     if options.isBuildActive:
+        with TimeIt.time_context('LittleDarwin', 'initial_build'):
+            # let's tell the user upfront that this may corrupt the source code.
+            print "\n\n!!! CAUTION !!!"
+            print "code can be changed accidentally. use a backup version.\n"
 
-        # let's tell the user upfront that this may corrupt the source code.
-        print "\n\n!!! CAUTION !!!"
-        print "code can be changed accidentally. use a backup version.\n"
+            reportGenerator = ReportGenerator()
 
-        reportGenerator = ReportGenerator()
-
-        if options.alternateDb == "***dummy***":
-            databasePath = os.path.abspath(os.path.join(options.sourcePath, os.path.pardir, "mutated", "mutationdatabase"))
-        else:
-            databasePath = options.alternateDb
-
-        resultsDatabasePath = databasePath + "-results"
-        reportGenerator.initiateDatabase(resultsDatabasePath)
-
-        try:
-            if os.path.basename(options.buildPath) == "pom.xml":
-                assert os.path.isfile(options.buildPath)
-                buildDir = os.path.abspath(os.path.dirname(options.buildPath))
+            if options.alternateDb == "***dummy***":
+                databasePath = os.path.abspath(os.path.join(options.sourcePath, os.path.pardir, "mutated", "mutationdatabase"))
             else:
-                assert os.path.isdir(options.buildPath)
-                buildDir = os.path.abspath(options.buildPath)
+                databasePath = options.alternateDb
 
-        except AssertionError as exception:
-            print "build system working directory should be a directory."
+            resultsDatabasePath = databasePath + "-results"
+            reportGenerator.initiateDatabase(resultsDatabasePath)
+
+            try:
+                if os.path.basename(options.buildPath) == "pom.xml":
+                    assert os.path.isfile(options.buildPath)
+                    buildDir = os.path.abspath(os.path.dirname(options.buildPath))
+                else:
+                    assert os.path.isdir(options.buildPath)
+                    buildDir = os.path.abspath(options.buildPath)
+
+            except AssertionError as exception:
+                print "build system working directory should be a directory."
 
 
 
-        # check if we have separate test-suite
-        if options.testCommand != "***dummy***":
-            separateTestSuite = True
-            if options.testPath == "***dummy***":
-                testDir = buildDir
+            # check if we have separate test-suite
+            if options.testCommand != "***dummy***":
+                separateTestSuite = True
+                if options.testPath == "***dummy***":
+                    testDir = buildDir
+                else:
+                    try:
+                        if os.path.basename(options.buildPath) == "pom.xml":
+                            assert os.path.isfile(options.buildPath)
+                            testDir = os.path.abspath(os.path.dirname(options.testPath))
+                        else:
+                            assert os.path.isdir(options.buildPath)
+                            testDir = os.path.abspath(options.testPath)
+
+                    except AssertionError as exception:
+                        print "test project build system working directory should be a directory."
+
             else:
-                try:
-                    if os.path.basename(options.buildPath) == "pom.xml":
-                        assert os.path.isfile(options.buildPath)
-                        testDir = os.path.abspath(os.path.dirname(options.testPath))
-                    else:
-                        assert os.path.isdir(options.buildPath)
-                        testDir = os.path.abspath(options.testPath)
+                separateTestSuite = False
 
-                except AssertionError as exception:
-                    print "test project build system working directory should be a directory."
+            # try to open the database. if it can't be opened, it means that it does not exist or it is corrupt.
+            try:
+                mutationDatabase = shelve.open(databasePath, "r")
+            except:
+                print "cannot open mutation database. it may be corrupted or unavailable. delete all generated files and run the mutant generation phase again."
+                sys.exit(1)
 
-        else:
-            separateTestSuite = False
+            databaseKeys = mutationDatabase.keys()
+            assert isinstance(databaseKeys, list)
 
-        # try to open the database. if it can't be opened, it means that it does not exist or it is corrupt.
-        try:
-            mutationDatabase = shelve.open(databasePath, "r")
-        except:
-            print "cannot open mutation database. it may be corrupted or unavailable. delete all generated files and run the mutant generation phase again."
-            sys.exit(1)
+            # let's sort the mutants by name to create the possibility of following the flow of the process by user.
+            databaseKeys.sort()
 
-        databaseKeys = mutationDatabase.keys()
-        assert isinstance(databaseKeys, list)
-
-        # let's sort the mutants by name to create the possibility of following the flow of the process by user.
-        databaseKeys.sort()
-
-        # only here for debugging purposes
-        # for desired in databaseKeys:
-        #     if "PluginMap.java" in desired:
-        #         desiredIndex = databaseKeys.index(desired)
-        #         break
-        #
-        # databaseKeys.insert(0, databaseKeys.pop(desiredIndex))
-        #
+            # only here for debugging purposes
+            # for desired in databaseKeys:
+            #     if "PluginMap.java" in desired:
+            #         desiredIndex = databaseKeys.index(desired)
+            #         break
+            #
+            # databaseKeys.insert(0, databaseKeys.pop(desiredIndex))
+            #
 
 
-        mutationDatabaseLength = len(databaseKeys)
-        textReportData = list()
-        htmlReportData = list()
-        fileCounter = 0
+            mutationDatabaseLength = len(databaseKeys)
+            textReportData = list()
+            htmlReportData = list()
+            fileCounter = 0
 
 
 
 
-        # initial build check to avoid false results. the system must be able to build cleanly without errors.
+            # initial build check to avoid false results. the system must be able to build cleanly without errors.
 
-        # use build command for the initial build unless it is explicitly provided.
-        if options.initialBuildCommand == "***dummy***":
-            commandString = options.buildCommand.split(',')
-        else:
-            commandString = options.initialBuildCommand.split(',')
-
-        print "Initial build... ",
-
-        try:
-            processKilled, processExitCode, initialOutput = timeoutAlternative(commandString,
-                                                                           workingDirectory=buildDir,
-                                                                           timeout=int(options.timeout))
-
-            # initialOutput = subprocess.check_output(commandString, stderr=subprocess.STDOUT, cwd=buildDir)
-            # workaround for older python versions
-            if processKilled or processExitCode:
-                raise subprocess.CalledProcessError(1 if processKilled else processExitCode, commandString, initialOutput)
-
-
-            with open(os.path.abspath(os.path.join(options.sourcePath, os.path.pardir, "mutated", "initialbuild.txt")),
-                      'w') as content_file:
-                content_file.write(initialOutput)
-            print "done.\n\n"
-
-        except subprocess.CalledProcessError as exception:
-            initialOutput = exception.output
-            with open(os.path.abspath(os.path.join(options.sourcePath, os.path.pardir, "mutated", "initialbuild.txt")),
-                      'w') as content_file:
-                content_file.write(initialOutput)
-            print "failed.\n\nInitial build failed. Try building the system manually first to make sure it can be built."
-            sys.exit(1)
-
-        totalMutantCount = 0
-        totalMutantCounter = 0
-
-
-        for key in databaseKeys:
-            totalMutantCount += len(mutationDatabase[key])
-
-        startTime = time.time()
-
-        # running the build system for each mutant.
-        for key in databaseKeys:
-
-            fileCounter += 1
-
-            print "(" + str(fileCounter) + "/" + str(mutationDatabaseLength) + ") collecting results for ", key
-
-            mutantCount = len(mutationDatabase[key])
-            mutantCounter = 0
-
-            successList = list()
-            failureList = list()
-
-            # for each mutant, replace the original file, run the build, store the results
-            for replacementFileRel in mutationDatabase[key]:
-                replacementFile = os.path.join(options.sourcePath, os.path.pardir, "mutated", replacementFileRel)
-                mutantCounter += 1
-                totalMutantCounter += 1
-
-                # let's make sure that runOutput is empty, and not None to begin with.
-                runOutput = ""
-                runOutputTest = ""
-
-                # replace the original file with the mutant
-                shutil.copyfile(replacementFile, os.path.join(options.sourcePath, key))
-
+            # use build command for the initial build unless it is explicitly provided.
+            if options.initialBuildCommand == "***dummy***":
                 commandString = options.buildCommand.split(',')
-                if separateTestSuite:
-                    testCommandString = options.testCommand.split(',')
+            else:
+                commandString = options.initialBuildCommand.split(',')
 
-                try:
-                    # if we have timeout support, simply run the command with timeout support from subprocess32
-                    # if timeoutSupport:
-                    #     runOutput = subprocess.check_output(commandString, stderr=subprocess.STDOUT, cwd=buildDir,
-                    #                                         timeout=int(options.timeout))
-                    #     if separateTestSuite:
-                    #         runOutput += subprocess.check_output(testCommandString, stderr=subprocess.STDOUT, cwd=testDir,
-                    #                                         timeout=int(options.timeout))
+            print "Initial build... ",
 
-                    # else, run our alternative method
-                    # else:
-                    processKilled, processExitCode, runOutput = timeoutAlternative(commandString,
-                                                                              workingDirectory=buildDir,
-                                                                              timeout=int(options.timeout))
+            try:
+                processKilled, processExitCode, initialOutput = timeoutAlternative(commandString,
+                                                                               workingDirectory=buildDir,
+                                                                               timeout=int(options.timeout))
 
-                    # raise the same exception as the original check_output.
-                    if processKilled or processExitCode:
-                        raise subprocess.CalledProcessError(1 if processKilled else processExitCode, commandString,
-                                                                runOutput)
+                # initialOutput = subprocess.check_output(commandString, stderr=subprocess.STDOUT, cwd=buildDir)
+                # workaround for older python versions
+                if processKilled or processExitCode:
+                    raise subprocess.CalledProcessError(1 if processKilled else processExitCode, commandString, initialOutput)
 
+                with TimeIt.time_context('MutatorWrapper', 'writeInitialBuildOutput'):
+                    with open(os.path.abspath(os.path.join(options.sourcePath, os.path.pardir, "mutated", "initialbuild.txt")),
+                              'w') as content_file:
+                        content_file.write(initialOutput)
+                print "done.\n\n"
+
+            except subprocess.CalledProcessError as exception:
+                initialOutput = exception.output
+                with open(os.path.abspath(os.path.join(options.sourcePath, os.path.pardir, "mutated", "initialbuild.txt")),
+                          'w') as content_file:
+                    content_file.write(initialOutput)
+                print "failed.\n\nInitial build failed. Try building the system manually first to make sure it can be built."
+                sys.exit(1)
+
+        with TimeIt.time_context('LittleDarwin', 'processMutant(Includes partialReportGeneration, remove its time!!!)'):
+            totalMutantCount = 0
+            totalMutantCounter = 0
+
+
+            for key in databaseKeys:
+                totalMutantCount += len(mutationDatabase[key])
+
+            startTime = time.time()
+
+            # running the build system for each mutant.
+            for key in databaseKeys:
+
+                fileCounter += 1
+
+                print "(" + str(fileCounter) + "/" + str(mutationDatabaseLength) + ") collecting results for ", key
+
+                mutantCount = len(mutationDatabase[key])
+                mutantCounter = 0
+
+                successList = list()
+                failureList = list()
+
+                # for each mutant, replace the original file, run the build, store the results
+                for replacementFileRel in mutationDatabase[key]:
+                    replacementFile = os.path.join(options.sourcePath, os.path.pardir, "mutated", replacementFileRel)
+                    mutantCounter += 1
+                    totalMutantCounter += 1
+
+                    # let's make sure that runOutput is empty, and not None to begin with.
+                    runOutput = ""
+                    runOutputTest = ""
+
+                    with TimeIt.time_context('LittleDarwin', 'readAndReplaceMutantFileForExecution'):
+                        # replace the original file with the mutant
+                        shutil.copyfile(replacementFile, os.path.join(options.sourcePath, key))
+
+                    commandString = options.buildCommand.split(',')
                     if separateTestSuite:
-                        processKilled, processExitCode, runOutputTest = timeoutAlternative(testCommandString,
-                                                              workingDirectory=testDir, timeout=int(options.timeout))
+                        testCommandString = options.testCommand.split(',')
 
-                            # raise the same exception as the original check_output.
+                    try:
+                        # if we have timeout support, simply run the command with timeout support from subprocess32
+                        # if timeoutSupport:
+                        #     runOutput = subprocess.check_output(commandString, stderr=subprocess.STDOUT, cwd=buildDir,
+                        #                                         timeout=int(options.timeout))
+                        #     if separateTestSuite:
+                        #         runOutput += subprocess.check_output(testCommandString, stderr=subprocess.STDOUT, cwd=testDir,
+                        #                                         timeout=int(options.timeout))
+
+                        # else, run our alternative method
+                        # else:
+                        processKilled, processExitCode, runOutput = timeoutAlternative(commandString,
+                                                                                  workingDirectory=buildDir,
+                                                                                  timeout=int(options.timeout))
+
+                        # raise the same exception as the original check_output.
                         if processKilled or processExitCode:
-                            raise subprocess.CalledProcessError(1 if processKilled else processExitCode,
-                                                              commandString, "\n".join([runOutput, runOutputTest]))
+                            raise subprocess.CalledProcessError(1 if processKilled else processExitCode, commandString,
+                                                                    runOutput)
+
+                        if separateTestSuite:
+                            processKilled, processExitCode, runOutputTest = timeoutAlternative(testCommandString,
+                                                                  workingDirectory=testDir, timeout=int(options.timeout))
+
+                                # raise the same exception as the original check_output.
+                            if processKilled or processExitCode:
+                                raise subprocess.CalledProcessError(1 if processKilled else processExitCode,
+                                                                  commandString, "\n".join([runOutput, runOutputTest]))
 
 
-                    # if we are here, it means no exceptions happened, so lets add this to our success list.
-                    runOutput += "\n" + runOutputTest
-                    successList.append(os.path.basename(replacementFile))
+                        # if we are here, it means no exceptions happened, so lets add this to our success list.
+                        runOutput += "\n" + runOutputTest
+                        successList.append(os.path.basename(replacementFile))
 
-                # putting two exceptions in one except clause, specially when one of them is not defined on some
-                # platforms does not look like a good idea; even though both of them do exactly the same thing.
-                except subprocess.CalledProcessError as exception:
-                    runOutput = exception.output
-                    # oops, error. let's add this to failure list.
-                    failureList.append(os.path.basename(replacementFile))
+                    # putting two exceptions in one except clause, specially when one of them is not defined on some
+                    # platforms does not look like a good idea; even though both of them do exactly the same thing.
+                    except subprocess.CalledProcessError as exception:
+                        runOutput = exception.output
+                        # oops, error. let's add this to failure list.
+                        failureList.append(os.path.basename(replacementFile))
 
-                # except subprocess.TimeoutExpired as exception:
-                #     runOutput = exception.output
-                #     failureList.append(os.path.basename(replacementFile))
+                    # except subprocess.TimeoutExpired as exception:
+                    #     runOutput = exception.output
+                    #     failureList.append(os.path.basename(replacementFile))
 
-                targetTextOutputFile = os.path.splitext(replacementFile)[0] + ".txt"
-
-
-                # we can't use print, since we like to write on the same line again.
-                sys.stdout.write(
-                    "elapsed: " + str(datetime.timedelta(seconds=int(time.time() - startTime))) + " remaining: " + str(
-                        datetime.timedelta(seconds=int((float(time.time() - startTime) / totalMutantCounter) * float(
-                            totalMutantCount - totalMutantCounter)))) + " total: " + str(
-                        totalMutantCounter) + "/" + str(totalMutantCount) + " current: " + str(
-                        mutantCounter) + "/" + str(mutantCount) + " *** survived: " + str(
-                        len(successList)) + " - killed: " + str(len(failureList)) + "         \r")
-                sys.stdout.flush()
-
-                # writing the build output to disk.
-                with open(targetTextOutputFile, 'w') as content_file:
-                    content_file.write(runOutput)
-
-                # if there's a cleanup option, execute it. the results will be ignored because we don't want our process
-                #  to be interrupted if there's nothing to clean up.
-                if options.cleanUp != "***dummy***":
-                    subprocess.call(options.cleanUp.split(","), cwd=buildDir)
-                    if separateTestSuite:
-                        subprocess.call(options.cleanUp.split(","), cwd=testDir)
-
-                #workaround:
-                #shutil.rmtree(os.path.join(testDir,"VolumetryLoggerTest"),ignore_errors=True)
+                    targetTextOutputFile = os.path.splitext(replacementFile)[0] + ".txt"
 
 
-            # all mutants must be checked by now, so we should have a complete divide between success and failure.
-            assert len(successList) + len(failureList) == mutantCount
+                    # we can't use print, since we like to write on the same line again.
+                    sys.stdout.write(
+                        "elapsed: " + str(datetime.timedelta(seconds=int(time.time() - startTime))) + " remaining: " + str(
+                            datetime.timedelta(seconds=int((float(time.time() - startTime) / totalMutantCounter) * float(
+                                totalMutantCount - totalMutantCounter)))) + " total: " + str(
+                            totalMutantCounter) + "/" + str(totalMutantCount) + " current: " + str(
+                            mutantCounter) + "/" + str(mutantCount) + " *** survived: " + str(
+                            len(successList)) + " - killed: " + str(len(failureList)) + "         \r")
+                    sys.stdout.flush()
 
-            # append the information for this file to the reports.
-            textReportData.append(key + ": survived (" + str(len(successList)) + "/" + str(mutantCount) + ") -> " + str(
-                successList) + " - killed (" + str(len(failureList)) + "/" + str(mutantCount) + ") -> " + str(
-                failureList) + "\r\n")
-            htmlReportData.append([key, len(successList), mutantCount])
+                    with TimeIt.time_context('LittleDarwin', 'writeMutantBuildOutput'):
+                        # writing the build output to disk.
+                        with open(targetTextOutputFile, 'w') as content_file:
+                            content_file.write(runOutput)
 
-            # we are done with the file. let's return it to the original state.
-            shutil.copyfile(os.path.join(os.path.dirname(replacementFile), "original.java"), os.path.join(options.sourcePath, key))
+                    # if there's a cleanup option, execute it. the results will be ignored because we don't want our process
+                    #  to be interrupted if there's nothing to clean up.
+                    if options.cleanUp != "***dummy***":
+                        subprocess.call(options.cleanUp.split(","), cwd=buildDir)
+                        if separateTestSuite:
+                            subprocess.call(options.cleanUp.split(","), cwd=testDir)
 
-            # generate an HTML report for the file.
+                    #workaround:
+                    #shutil.rmtree(os.path.join(testDir,"VolumetryLoggerTest"),ignore_errors=True)
 
-            targetHTMLOutputFile = os.path.join(os.path.dirname(replacementFile), "results.html")
-            with open(targetHTMLOutputFile, 'w') as content_file:
-                content_file.write(
-                    reportGenerator.generateHTMLReportPerFile(key, targetHTMLOutputFile, successList, failureList))
 
-            print "\n\n"
+                # all mutants must be checked by now, so we should have a complete divide between success and failure.
+                assert len(successList) + len(failureList) == mutantCount
 
-        # write final text report.
-        with open(os.path.abspath(os.path.join(options.sourcePath, os.path.pardir, "mutated", "report.txt")),
-                  'w') as textReportFile:
-            textReportFile.writelines(textReportData)
+                with TimeIt.time_context('LittleDarwin', 'partialReportGeneration'):
+                    # append the information for this file to the reports.
+                    textReportData.append(key + ": survived (" + str(len(successList)) + "/" + str(mutantCount) + ") -> " + str(
+                        successList) + " - killed (" + str(len(failureList)) + "/" + str(mutantCount) + ") -> " + str(
+                        failureList) + "\r\n")
+                    htmlReportData.append([key, len(successList), mutantCount])
 
-        # write final HTML report.
-        targetHTMLReportFile = os.path.abspath(
-            os.path.join(options.sourcePath, os.path.pardir, "mutated", "report.html"))
-        with open(targetHTMLReportFile, 'w') as htmlReportFile:
-            htmlReportFile.writelines(reportGenerator.generateHTMLFinalReport(htmlReportData, targetHTMLReportFile))
+                # we are done with the file. let's return it to the original state.
+                shutil.copyfile(os.path.join(os.path.dirname(replacementFile), "original.java"), os.path.join(options.sourcePath, key))
+
+                with TimeIt.time_context('LittleDarwin', 'partialReportGeneration'):
+                    # generate an HTML report for the file.
+                    targetHTMLOutputFile = os.path.join(os.path.dirname(replacementFile), "results.html")
+                    with open(targetHTMLOutputFile, 'w') as content_file:
+                        content_file.write(
+                            reportGenerator.generateHTMLReportPerFile(key, targetHTMLOutputFile, successList, failureList))
+
+                print "\n\n"
+
+        with TimeIt.time_context('LittleDarwin', 'otherPartOfReportGeneration'):
+            # write final text report.
+            with open(os.path.abspath(os.path.join(options.sourcePath, os.path.pardir, "mutated", "report.txt")),
+                      'w') as textReportFile:
+                textReportFile.writelines(textReportData)
+
+            # write final HTML report.
+            targetHTMLReportFile = os.path.abspath(
+                os.path.join(options.sourcePath, os.path.pardir, "mutated", "report.html"))
+            with open(targetHTMLReportFile, 'w') as htmlReportFile:
+                htmlReportFile.writelines(reportGenerator.generateHTMLFinalReport(htmlReportData, targetHTMLReportFile))
 
     # if neither build nor mutation phase is active, let's help the user.
     if not (options.isBuildActive or options.isMutationActive):
@@ -570,3 +580,4 @@ def main(argv):
 
 if __name__ == "__main__":
         main(sys.argv)
+        TimeIt.print_timings()
